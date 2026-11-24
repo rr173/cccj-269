@@ -176,6 +176,31 @@ class Dataset:
     def ledger_day(self, day: date) -> LedgerDay | None:
         return self.ledger_days.get(day)
 
+    def archive_range(self, start: Any = None, end: Any = None, **kwargs: Any) -> Any:
+        """Archive a contiguous fully-readable range of this dataset.
+
+        Thin wrapper around :func:`procurement_report.archive.archive_range`.
+        """
+
+        from .archive import archive_range
+
+        return archive_range(self.data_dir, start, end, **kwargs)
+
+    def archive(self, *args: Any, **kwargs: Any) -> Any:
+        """Alias for :meth:`archive_range`."""
+
+        return self.archive_range(*args, **kwargs)
+
+    def close_range(self, start: Any = None, end: Any = None, **kwargs: Any) -> Any:
+        """Alias for :meth:`archive_range`."""
+
+        return self.archive_range(start, end, **kwargs)
+
+    def create_closing_slice(self, *args: Any, **kwargs: Any) -> Any:
+        """Alias for :meth:`archive_range`."""
+
+        return self.archive_range(*args, **kwargs)
+
 
 @dataclass(frozen=True)
 class Query:

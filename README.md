@@ -9,6 +9,14 @@ python3 examples/build_example.py /tmp/demo      # 生成示例目录
 python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
     --group-by department --group-by category --pretty
 
+# 把一段连续、完整可读的底账归档成一个关账汇总片（多种等价入口）
+python3 -m procurement_report /tmp/demo --archive \
+    --start 2024-01-01 --end 2024-01-03 --slice-id jan01-02-arc
+python3 -m procurement_report archive /tmp/demo \
+    --start 2024-01-01 --end 2024-01-03 --slice-id jan01-02-arc
+python3 -m procurement_report.archive /tmp/demo \
+    --start 2024-01-01 --end 2024-01-03 --slice-id jan01-02-arc
+
 # 预算对账（规则文件必须在数据目录之外）
 python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
     --budget examples/budget_rules.json --pretty
@@ -123,6 +131,54 @@ Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` �
   溢出时为 `null`）。
 
 两者都由精确的 `amount_sum` 与 `amount_nonnull_count` 现场计算，不经过任何浮点累加。
+
+## 本地归档（`archive`）
+
+归档操作把一段连续整日半开区间 `[start, end)` 内**每一天的底账完整读完并核对**，
+用与报表引擎完全相同的折叠逻辑生成一个保留全部固定维度的、摘要密封的
+`complete: true` 关账汇总片，并把它的目录条目原子写入 `catalog.json`：
+
+```python
+from procurement_report import archive_range
+
+result = archive_range("/data/procurement", "2024-01-01", "2024-01-09",
+                       slice_id="jan01-08-arc")
+result.slice_id   # "jan01-08-arc"
+result.digest     # "sha256:..."
+```
+
+```bash
+python3 -m procurement_report archive /data/procurement \
+    --start 2024-01-01 --end 2024-01-09 \
+    --slice-id jan01-08-arc --pretty
+```
+
+归档片的 `group_dims` 默认为目录声明的**完整维度字典**，因此归档后任意
+维度子集的分组、过滤查询都能直接使用它。计数（`record_count`、
+`amount_nonnull_count`、`amount_sum`）由底账逐行精确累加，语义与底账段
+完全一致；空组不输出，缺组即无记录。
+
+**全有或全无的发布。** 区间内任一天缺少目录条目、`readable=false`、
+状态非 `verified`、文件缺失/不可读、JSON/行损坏或取值越出维度字典，
+都会抛出 `ArchiveError`（同时是 `DataError` 与 `ConfigError`），
+在写入任何文件**之前**中止；`catalog.json` 与 `summaries/` 不会出现
+声称覆盖完整区间的新片。命令行此时退出码为 `1`。
+`try_archive_range(...)` 不抛异常，改为返回 `ok=false/published=false`
+的结果并列出 `problems`/`unreadable_days`。
+
+**原子发布与发布后核对。** 汇总片先写临时文件再 `os.replace` 落位，
+随后目录同样原子替换；发布后立即重新加载目录并用 `SliceVerifier`
+核对新片（摘要、维度、计数关系、重复组等）。核对失败会回滚目录原文并
+删除新片文件，因此半成品归档不可能被报表规划器当成有效来源。
+已存在相同 `slice_id` 且密封内容一致时直接幂等复用；同 id 内容不同会
+拒绝，除非显式 `replace=True` / `--replace`。
+
+归档本身**不会**改动底账可读性；之后即使这些天的底账被清除或在目录中
+改为 `readable=false`，原有查询仍由归档片精确出表，分组与金额和归档前
+逐行一致（均值等派生字段自然也一致）。如需归档后顺手把这些天标记为
+不可读，可传 `mark_unreadable=True` 或 CLI `--mark-unreadable`/`--purge`
+（只把既有目录条目的 `readable` 改为 `false`、`status` 改为 `archived`，
+不新增目录键）。
 
 ## 规划算法
 
@@ -256,6 +312,7 @@ python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
 | `verify.py` | 按需核对汇总片（免费），缓存结果 |
 | `planner.py` | 可达边界 DP + 最少底账读取 DP + 覆盖率自检 |
 | `ledger.py` | 逐日整读、过滤、精确累加与输出行构造 |
+| `archive.py` | 连续区间全量核对、生成密封关账汇总片、原子发布与回滚；含独立 CLI |
 | `engine.py` | 只按方案读取并出表 |
 | `budget.py` | 预算规则校验、按生效日分段、逐段对账 |
 | `cli.py` / `__main__.py` | 命令行入口 |

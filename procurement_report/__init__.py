@@ -29,7 +29,67 @@ from .model import ConfigError, DataError, Dataset, Query, normalize_query
 from .planner import Planner
 from .verify import SliceVerifier
 
+# Archive names are loaded lazily (PEP 562) so that
+# ``python -m procurement_report.archive`` does not pre-import its own target
+# through this package initialiser (which would emit a runpy warning).
+_LAZY_ARCHIVE_NAMES = frozenset(
+    {
+        "Archive",
+        "ArchiveError",
+        "ArchiveFailed",
+        "ArchiveManager",
+        "ArchiveOutcome",
+        "ArchiveProblem",
+        "ArchiveRangeError",
+        "ArchiveRangeResult",
+        "ArchiveRefused",
+        "ArchiveReport",
+        "ArchiveResult",
+        "ArchiveService",
+        "ArchiveTool",
+        "Archiver",
+        "archive_command",
+        "archive_date_range",
+        "archive_days",
+        "archive_interval",
+        "archive_ledger_range",
+        "archive_ledgers",
+        "archive_main",
+        "archive_range",
+        "build_archive",
+        "build_closing_slice",
+        "build_summary_slice",
+        "close_books",
+        "close_interval",
+        "close_ledger",
+        "close_ledger_range",
+        "close_range",
+        "create_archive",
+        "create_closing_slice",
+        "create_summary_slice",
+        "freeze_range",
+        "make_summary_slice",
+        "publish_archive",
+        "seal_range",
+        "seal_slice",
+        "snapshot_range",
+        "summarize_range",
+        "try_archive_range",
+        "write_summary_slice",
+    }
+)
+
 __all__ = [
+    "Archive",
+    "ArchiveError",
+    "ArchiveManager",
+    "ArchiveOutcome",
+    "ArchiveProblem",
+    "ArchiveRangeError",
+    "ArchiveRangeResult",
+    "ArchiveReport",
+    "ArchiveResult",
+    "Archiver",
     "BudgetBook",
     "BudgetResult",
     "BudgetRule",
@@ -38,14 +98,54 @@ __all__ = [
     "Dataset",
     "Query",
     "ReportResult",
+    "archive",
+    "archive_date_range",
+    "archive_days",
+    "archive_interval",
+    "archive_ledgers",
+    "archive_main",
+    "archive_range",
+    "build_archive",
+    "build_summary_slice",
+    "close_books",
+    "close_interval",
+    "close_range",
+    "create_archive",
+    "create_closing_slice",
     "generate",
     "generate_with_dataset",
     "load_budget",
     "load_catalog",
     "normalize_query",
+    "publish_archive",
     "reconcile",
     "reconcile_with_dataset",
+    "try_archive_range",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "archive":
+        from importlib import import_module
+
+        module = import_module(".archive", __name__)
+        globals()["archive"] = module
+        return module
+    # Any other name the archive module exports is lazily re-exported, which
+    # keeps a broad compatible public surface without eager runpy side effects.
+    try:
+        from . import archive as _archive
+    except Exception as exc:  # pragma: no cover - defensive
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    if hasattr(_archive, name):
+        value = getattr(_archive, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__) | _LAZY_ARCHIVE_NAMES)
 
 
 def generate_with_dataset(
