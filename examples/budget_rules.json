@@ -1,0 +1,44 @@
+{
+  "rules": [
+    {
+      "rule_id": "north-steel-jan1-3",
+      "department": "north",
+      "category": "steel",
+      "start": "2024-01-01",
+      "end": "2024-01-03",
+      "daily_limit": 100
+    },
+    {
+      "rule_id": "north-steel-jan3-9",
+      "department": "north",
+      "category": "steel",
+      "start": "2024-01-03",
+      "end": "2024-01-09",
+      "daily_limit": 500
+    },
+    {
+      "rule_id": "north-steel-jan9-16",
+      "department": "north",
+      "category": "steel",
+      "start": "2024-01-09",
+      "end": "2024-01-16",
+      "daily_limit": 500
+    },
+    {
+      "rule_id": "north-glass-jan1-16",
+      "department": "north",
+      "category": "glass",
+      "start": "2024-01-01",
+      "end": "2024-01-16",
+      "daily_limit": 100
+    },
+    {
+      "rule_id": "south-steel-jan1-16",
+      "department": "south",
+      "category": "steel",
+      "start": "2024-01-01",
+      "end": "2024-01-16",
+      "daily_limit": 9000000000000000000
+    }
+  ]
+}

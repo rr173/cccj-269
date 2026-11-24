@@ -4,13 +4,18 @@
 **不猜明细、不重复计数、不做片间减法，并最小化付费的底账读取天数。**
 
 ```bash
-python3 -m unittest discover -s tests -t .      # 41+ 项测试（含穷举对照与随机差分）
+python3 -m unittest discover -s tests -t .      # 72 项测试（含穷举对照与随机差分）
 python3 examples/build_example.py /tmp/demo      # 生成示例目录
 python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
     --group-by department --group-by category --pretty
+
+# 预算对账（规则文件必须在数据目录之外）
+python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
+    --budget examples/budget_rules.json --pretty
 ```
 
-Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` 不能出表、`1` 配置/读取错误。
+Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` 不能出表、
+`3` 预算对账无法完成、`1` 配置/读取错误。
 
 ## 输入目录
 
@@ -178,6 +183,68 @@ Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` �
 }
 ```
 
+## 预算对账（`--budget`）
+
+在原数据目录之外另给一份预算规则文件，即可按部门、品类和预算生效区间输出
+实际金额、预算额、差额和执行状态。仓库语义（来源完整性、过滤、精确整数金额）
+完全沿用上面的报表引擎。
+
+```bash
+python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
+    --budget examples/budget_rules.json --pretty
+```
+
+规则文件（**必须在数据目录之外**，否则 `ConfigError`）：
+
+```jsonc
+{
+  "rules": [
+    {"rule_id": "north-steel-jan3-9",      // rule_id 可选、需唯一
+     "department": "north", "category": "steel",
+     "start": "2024-01-03", "end": "2024-01-09",   // 整日半开区间 [start, end)
+     "daily_limit": 500}                            // 每日额度，整数分
+  ]
+}
+```
+
+- 同一 `(department, category)` 的规则**不得在日期上重叠**；相邻首尾相接可以。
+  重叠、反向区间、字典外取值、非整数/负额度、重复 `rule_id` 都是 `ConfigError`。
+- **没有规则覆盖的日期 = 未配置预算**，输出 `budget_amount: null`、
+  `status: "unbudgeted"`，绝不当作 0。显式 `daily_limit: 0` 才是真实的零预算。
+
+**分段与归属。** 查询区间在每个生效边界处切开，各段分别核算：
+
+- 实际金额按**生效日**归属：底账某天只落在包含它的那一段；汇总片只有在其整个区间
+  对每个有记录的部门/品类都落在同一段内时才可用。
+- 区间预算额 = `daily_limit × 该段日数`（段会被查询区间裁剪）。
+- `actual_amount > budget_amount` 为 `over_budget`，否则 `within_budget`；
+  `difference = budget_amount − actual_amount`（未配置预算时为 `null`）。
+
+**不可拆分的片绝不按比例分摊。** 若唯一可用的汇总片跨越预算边界，它的金额是跨段聚合的，
+无法精确拆给各段；该片被列入 `rejected_slices`，若没有别的合法来源能覆盖查询，
+输出 `status: "cannot_reconcile"`（退出码 `3`），并说明原因——不会给出看似完整的对账表。
+底账缺失/损坏、字典外取值等仍按原语义报 `DataError`。
+
+输出在普通报表的基础上按行给出 `group`（部门+品类）、`segment`（生效区间）、
+`rule_id`、`budget_daily_limit`、`budget_amount`、`actual_amount`、`difference`、
+`status`，以及原有的 `record_count`/`amount_nonnull_count`。配置了规则但没有记录的
+部门/品类也会输出一行 `actual_amount = 0`。
+
+```json
+{
+  "status": "ok",
+  "rows": [
+    {"group": {"department": "north", "category": "steel"},
+     "segment": {"start": "2024-01-03", "end": "2024-01-09", "days": 6},
+     "rule_id": "north-steel-jan3-9", "budget_daily_limit": 500,
+     "budget_amount": 3000, "actual_amount": 4000,
+     "record_count": 4, "amount_nonnull_count": 4,
+     "difference": -1000, "status": "over_budget"}
+  ],
+  "row_count": 1
+}
+```
+
 ## 代码结构
 
 | 文件 | 职责 |
@@ -190,6 +257,7 @@ Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` �
 | `planner.py` | 可达边界 DP + 最少底账读取 DP + 覆盖率自检 |
 | `ledger.py` | 逐日整读、过滤、精确累加与输出行构造 |
 | `engine.py` | 只按方案读取并出表 |
+| `budget.py` | 预算规则校验、按生效日分段、逐段对账 |
 | `cli.py` / `__main__.py` | 命令行入口 |
 | `tests/` | 单元测试、穷举对照、随机差分、独立参照实现 |
 

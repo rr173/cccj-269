@@ -44,11 +44,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from .dates import iso
 from .model import ConfigError, Dataset, Query, SummarySlice
 from .verify import SliceVerifier
+
+#: A slice gate returns ``None`` when a verified slice may be used, or a
+#: human-readable reason for rejecting it.  Budget reconciliation uses it to
+#: exclude slices whose interval would straddle a budget effective-date
+#: boundary (their group amounts cannot be split per segment).
+SliceGate = Callable[[SummarySlice], str | None]
 
 
 @dataclass(frozen=True)
@@ -95,10 +101,17 @@ class Plan:
 
 
 class Planner:
-    def __init__(self, dataset: Dataset, query: Query, verifier: SliceVerifier):
+    def __init__(
+        self,
+        dataset: Dataset,
+        query: Query,
+        verifier: SliceVerifier,
+        gate: SliceGate | None = None,
+    ):
         self.dataset = dataset
         self.query = query
         self.verifier = verifier
+        self.gate = gate
         self._validate_query_dims()
 
         self._n = (query.end - query.start).days
@@ -164,6 +177,11 @@ class Planner:
             if error is not None:
                 self.rejected.append((slice_.slice_id, error))
                 continue
+            if self.gate is not None:
+                gate_error = self.gate(checked)
+                if gate_error is not None:
+                    self.rejected.append((checked.slice_id, gate_error))
+                    continue
             start_index = (checked.start - self.query.start).days  # type: ignore[operator]
             self._exclusive[checked.slice_id] = (checked.end - self.query.start).days  # type: ignore[operator]
             self._slices_at.setdefault(start_index, []).append(checked)

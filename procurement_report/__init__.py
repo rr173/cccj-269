@@ -15,6 +15,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from .budget import (
+    BudgetBook,
+    BudgetResult,
+    BudgetRule,
+    load_budget,
+    reconcile,
+    reconcile_with_dataset,
+)
 from .catalog import load_catalog
 from .engine import ReportResult, execute
 from .model import ConfigError, DataError, Dataset, Query, normalize_query
@@ -22,6 +30,9 @@ from .planner import Planner
 from .verify import SliceVerifier
 
 __all__ = [
+    "BudgetBook",
+    "BudgetResult",
+    "BudgetRule",
     "ConfigError",
     "DataError",
     "Dataset",
@@ -29,8 +40,11 @@ __all__ = [
     "ReportResult",
     "generate",
     "generate_with_dataset",
+    "load_budget",
     "load_catalog",
     "normalize_query",
+    "reconcile",
+    "reconcile_with_dataset",
 ]
 
 

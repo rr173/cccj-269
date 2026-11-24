@@ -37,6 +37,20 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def write_budget(path: str | Path, rules: Iterable[Mapping[str, Any]]) -> Path:
+    """Write a budget rule file (defaults ``daily_limit`` to 0, ``rule_id`` to index)."""
+
+    path = Path(path)
+    payload_rules = []
+    for i, rule in enumerate(rules):
+        entry = dict(rule)
+        entry.setdefault("rule_id", f"r{i}")
+        entry.setdefault("daily_limit", 0)
+        payload_rules.append(entry)
+    write_json(path, {"rules": payload_rules})
+    return path
+
+
 def build_dataset(
     root: str | Path,
     *,
