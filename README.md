@@ -4,7 +4,7 @@
 **不猜明细、不重复计数、不做片间减法，并最小化付费的底账读取天数。**
 
 ```bash
-python3 -m unittest discover -s tests -t .      # 72 项测试（含穷举对照与随机差分）
+python3 -m unittest discover -s tests -t .      # 101 项测试（含穷举对照与随机差分）
 python3 examples/build_example.py /tmp/demo      # 生成示例目录
 python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
     --group-by department --group-by category --pretty
@@ -20,10 +20,14 @@ python3 -m procurement_report.archive /tmp/demo \
 # 预算对账（规则文件必须在数据目录之外）
 python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
     --budget examples/budget_rules.json --pretty
+
+# 保留期清理计划：证明清理旧底账后工作负载仍可精确出表（只计划，不删除）
+python3 -m procurement_report cleanup /tmp/demo --before 2024-01-16 \
+    --workload examples/cleanup_workload.json --pretty
 ```
 
-Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表、`2` 不能出表、
-`3` 预算对账无法完成、`1` 配置/读取错误。
+Python 3.11，零第三方依赖。输出为 JSON；退出码 `0` 成表（或清理计划安全）、
+`2` 不能出表（或不能清理）、`3` 预算对账无法完成、`1` 配置/读取错误。
 
 ## 输入目录
 
@@ -180,6 +184,77 @@ python3 -m procurement_report archive /data/procurement \
 （只把既有目录条目的 `readable` 改为 `false`、`status` 改为 `archived`，
 不新增目录键）。
 
+## 保留期清理计划（`cleanup`）
+
+在清理旧底账**之前**，用一组已经约定的历史报表查询（工作负载）证明：把
+某些逐日底账删掉之后，这些查询仍能由**现有完整、合法且不可拆分的关账汇总片**
+或**仍可读的逐日底账**精确出表。该操作**只生成计划**，绝不删除底账、绝不
+改写 `catalog.json`、绝不改动任何汇总片文件。
+
+```bash
+python3 -m procurement_report cleanup /data/procurement \
+    --before 2024-02-01 --workload /path/to/workloads.json --pretty
+# 等价入口：python3 -m procurement_report.cleanup ... /
+#           python3 -m procurement_report /data/procurement cleanup ...
+```
+
+工作负载文件**必须在数据目录之外**（否则 `ConfigError`），列出未来仍需支持的
+查询，沿用报表引擎的日期区间、维度过滤与分组语义：
+
+```jsonc
+{
+  "queries": [
+    {"query_id": "jan-full",              // 可选、需唯一；缺省为 queries[i]
+     "start": "2024-01-01", "end": "2024-01-16",
+     "filters": {"category": ["steel"]},  // 可选
+     "group_by": ["department"]},          // 可选
+    {"query_id": "jan-all", "start": "2024-01-01", "end": "2024-01-16"}
+  ]
+}
+```
+
+顶层键可以是 `queries`/`workloads`/`reports`/`requests`/`items` 之一，或直接是
+一个查询数组。
+
+- `before` 是**排他**截止日：只有当某天 `day < before` **且**目录声明
+  `readable=true` 时，它的底账才是清理候选。
+- 对每条工作负载，必须给出一个与报表规划器完全相同的合法覆盖（整段汇总片
+  不可拆分、过滤/分组维度齐全、版次一致、`complete=true`、摘要核对通过），
+  且覆盖里用到的逐日底账**在清理后仍可读**。
+- **只有全部工作负载都能被证明时才输出安全计划**；否则输出
+  `status: "cannot_clean"`，并给出**最早**无法证明的工作负载及其边界
+  （`boundary` / `reachable_boundary`、`last_covered_day`、`failure_reason`）。
+- 缺失、不可读、未声明的底账**一律不当作 0**：某天既无片覆盖又不可读，就会让
+  该工作负载无法证明，和报表引擎的判断一致。
+
+**最大化与联合性。** 只优化一个**全局保留集合**，对**所有工作负载同时**
+可证明。目标是让可清理日期尽量多：先以多种顺序做贪心反向删除（结果必为
+包含极大，绝不多删），再在规模允许时用分支定界求最大基数。绝不会“为某条
+工作负载单独选方案再把可清理集合并起来”——某天只要还有别的工作负载需要，
+就不会被清理。
+
+输出（安全时）：
+
+```jsonc
+{
+  "status": "ok", "can_clean": true, "safe": true,
+  "before": "2024-02-01",
+  "candidate_dates": ["2024-01-01", "2024-01-02", "..."],  // 可清理候选
+  "cleanable_dates": ["2024-01-03", "..."],                // 可删
+  "must_retain_dates": ["2024-01-01", "2024-01-02"],       // 必须保留
+  "workloads": [                                           // 每条查询的来源
+    {"workload_id": "jan-full", "status": "ok",
+     "sources": [{"source": "ledger", "start": "...", "end": "...", "ledger_days": ["..."]},
+                 {"source": "summary", "start": "...", "end": "...", "slice_id": "jan03-08-v7"}],
+     "summary_slices_used": ["jan03-08-v7"], "candidate_ledger_days": ["..."]}
+  ]
+}
+```
+
+不能清理时给出 `proven_workloads` 与 `unprovable_workload`（含边界与原因）。
+退出码：`0` 有安全计划、`2` 不能清理（`cannot_clean`）、`1` 配置/读取错误。
+普通报表、预算对账与归档的调用方式与输出合同**完全不变**。
+
 ## 规划算法
 
 设查询有 `n` 天。`dp[i]` = 覆盖 `[i, n)` 所需的最少底账天数：
@@ -315,6 +390,7 @@ python3 -m procurement_report /tmp/demo --start 2024-01-01 --end 2024-01-16 \
 | `archive.py` | 连续区间全量核对、生成密封关账汇总片、原子发布与回滚；含独立 CLI |
 | `engine.py` | 只按方案读取并出表 |
 | `budget.py` | 预算规则校验、按生效日分段、逐段对账 |
+| `cleanup.py` | 保留期清理计划：工作负载校验、联合最大化可清理日期、边界诊断；含独立 CLI |
 | `cli.py` / `__main__.py` | 命令行入口 |
 | `tests/` | 单元测试、穷举对照、随机差分、独立参照实现 |
 

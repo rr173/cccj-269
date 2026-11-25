@@ -121,7 +121,34 @@ __all__ = [
     "reconcile",
     "reconcile_with_dataset",
     "try_archive_range",
+    # Retention cleanup planning (populated lazily to keep
+    # ``python -m procurement_report.cleanup`` free of runpy warnings).
+    "CleanupWorkload",
+    "WorkloadPlan",
+    "CleanupPlanResult",
+    "load_workloads",
+    "plan_cleanup",
+    "plan_cleanup_with_dataset",
+    "cleanup_command",
+    "cleanup_main",
 ]
+
+#: Public names provided by :mod:`procurement_report.cleanup`.  They are
+#: resolved lazily through ``__getattr__`` so that importing the package
+#: never imports the cleanup module eagerly (which would emit a runpy warning
+#: for ``python -m procurement_report.cleanup``).
+_LAZY_CLEANUP_NAMES = frozenset(
+    {
+        "CleanupPlanResult",
+        "CleanupWorkload",
+        "WorkloadPlan",
+        "cleanup_command",
+        "cleanup_main",
+        "load_workloads",
+        "plan_cleanup",
+        "plan_cleanup_with_dataset",
+    }
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -131,6 +158,13 @@ def __getattr__(name: str) -> Any:
         module = import_module(".archive", __name__)
         globals()["archive"] = module
         return module
+    if name in _LAZY_CLEANUP_NAMES:
+        from importlib import import_module
+
+        module = import_module(".cleanup", __name__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
     # Any other name the archive module exports is lazily re-exported, which
     # keeps a broad compatible public surface without eager runpy side effects.
     try:
@@ -145,7 +179,9 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__) | _LAZY_ARCHIVE_NAMES)
+    return sorted(
+        set(globals()) | set(__all__) | _LAZY_ARCHIVE_NAMES | _LAZY_CLEANUP_NAMES
+    )
 
 
 def generate_with_dataset(

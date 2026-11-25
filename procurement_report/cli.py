@@ -38,6 +38,9 @@ from .archive import (
 #: Leading tokens that select the local archive subcommand.
 _ARCHIVE_COMMANDS = ("archive", "close", "archive-range", "close-range")
 
+#: Leading tokens that select the local cleanup planning subcommand.
+_CLEANUP_COMMANDS = ("cleanup", "cleanup-plan", "retention", "plan-cleanup")
+
 #: Options whose very next argv token is a value (used for subcommand sniffing).
 _VALUE_OPTIONS = {
     "--filter",
@@ -62,6 +65,13 @@ _VALUE_OPTIONS = {
     "--archive-group-dim",
     "--mode",
     "--operation",
+    "--before",
+    "--cutoff",
+    "--purge-before",
+    "--workload",
+    "--workloads",
+    "--workload-file",
+    "--queries",
 }
 
 
@@ -75,14 +85,23 @@ def _split_archive_subcommand(argv: list[str]) -> list[str] | None:
     options).
     """
 
+    return _split_subcommand(argv, _ARCHIVE_COMMANDS)
+
+
+def _split_subcommand(
+    argv: list[str], commands: tuple[str, ...]
+) -> list[str] | None:
+    """Generic subcommand sniffer, shared by archive and cleanup."""
+
     if not argv:
         return None
 
-    # Leading command form: ``archive <positional> ...``.  When the very next
-    # token is an option, the legacy interpretation (data directory literally
-    # named "archive") is preserved if such a directory actually exists;
-    # otherwise route to the archive parser so options-first forms work too.
-    if argv[0] in _ARCHIVE_COMMANDS:
+    # Leading command form: ``cmd <positional> ...``.  When the very next
+    # token is an option, the legacy interpretation (a data directory
+    # literally named like the command) is preserved if such a directory
+    # actually exists; otherwise route to the subcommand parser so options-first
+    # forms work too.
+    if argv[0] in commands:
         rest = argv[1:]
         if "--data-dir" in rest:
             return rest
@@ -94,7 +113,7 @@ def _split_archive_subcommand(argv: list[str]) -> list[str] | None:
             return None
         return rest
 
-    # ``DATA_DIR archive ...`` form (command token not consumed as an option value).
+    # ``DATA_DIR cmd ...`` form (command token not consumed as an option value).
     skip_value = False
     for i, token in enumerate(argv):
         if skip_value:
@@ -105,9 +124,15 @@ def _split_archive_subcommand(argv: list[str]) -> list[str] | None:
             continue
         if "=" in token and token.split("=", 1)[0] in _VALUE_OPTIONS:
             continue
-        if token in _ARCHIVE_COMMANDS and i > 0:
+        if token in commands and i > 0:
             return argv[:i] + argv[i + 1 :]
     return None
+
+
+def _split_cleanup_subcommand(argv: list[str]) -> list[str] | None:
+    """Return cleanup-CLI argv when a cleanup subcommand is present."""
+
+    return _split_subcommand(argv, _CLEANUP_COMMANDS)
 
 
 def _filters(pairs: list[str]) -> dict[str, list[Any]]:
@@ -216,6 +241,13 @@ def main(argv: list[str] | None = None) -> int:
         from .archive import archive_main
 
         return archive_main(archive_argv)
+
+    # ``procurement_report cleanup DATA_DIR ...`` subcommand form.
+    cleanup_argv = _split_cleanup_subcommand(argv)
+    if cleanup_argv is not None:
+        from .cleanup import cleanup_main
+
+        return cleanup_main(cleanup_argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)

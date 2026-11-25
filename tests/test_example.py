@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,48 @@ class ExampleTests(unittest.TestCase):
             tuple(r["group"][d] for d in ["department", "category"])
             for r in result.rows
         ]
+
+
+class ExampleCleanupTests(unittest.TestCase):
+    """Cleanup planning over the bundled example."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.example = load_example_module()
+
+    def test_archive_first_then_cleanup_frees_the_range(self) -> None:
+        from procurement_report import archive_range, plan_cleanup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.example.main(str(Path(tmp) / "demo"))
+            workload = Path(tmp) / "workload.json"
+            workload.write_text(
+                json.dumps(
+                    {
+                        "queries": [
+                            {
+                                "query_id": "full",
+                                "start": "2024-01-01",
+                                "end": "2024-01-09",
+                                "group_by": ["department", "category"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # Without a slice covering Jan 1..3, those days have no other
+            # source if their ledgers disappear.
+            before = plan_cleanup(root, "2024-01-16", workload).to_json()
+            self.assertIn("2024-01-01", before["must_retain_dates"])
+
+            # Archive Jan 1..3 (they are currently readable), then re-plan.
+            archive_range(root, "2024-01-01", "2024-01-03", slice_id="jan01-02-arc")
+            after = plan_cleanup(root, "2024-01-16", workload).to_json()
+            self.assertEqual(after["status"], "ok")
+            self.assertIn("2024-01-01", after["cleanable_dates"])
+            self.assertIn("2024-01-02", after["cleanable_dates"])
+            self.assertIn("jan01-02-arc", after["workloads"][0]["summary_slices_used"])
 
 
 if __name__ == "__main__":
